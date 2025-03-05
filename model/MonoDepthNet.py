@@ -4,7 +4,7 @@ from abc import ABC
 
 from arch.networks.BaseNet import BaseNet
 from arch.networks.DepthDecoder import DepthDecoder
-from arch.networks.encoders.ResNetEncoder import ResNetEncoder
+from arch.networks.ResNetEncoder import ResNetEncoder
 from utils.config import cfg_has
 
 

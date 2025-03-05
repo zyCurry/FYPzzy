@@ -3,7 +3,6 @@
 from collections import namedtuple
 
 import numpy as np
-from PIL import Image
 
 __author__ = "Lee Clement"
 __email__ = "lee.clement@robotics.utias.utoronto.ca"
@@ -23,16 +22,20 @@ OxtsPacket = namedtuple('OxtsPacket',
 OxtsData = namedtuple('OxtsData', 'packet, T_w_imu')
 
 
-def subselect_files(files, indices):
-    try:
-        files = [files[i] for i in indices]
-    except:
-        pass
-    return files
-
-
 def rotx(t):
-    """Rotation about the x-axis."""
+    """
+    Rotation about the x-axis
+
+    Parameters
+    ----------
+    t : Float
+        Theta angle
+
+    Returns
+    -------
+    matrix : np.Array
+        Rotation matrix [3,3]
+    """
     c = np.cos(t)
     s = np.sin(t)
     return np.array([[1,  0,  0],
@@ -41,7 +44,19 @@ def rotx(t):
 
 
 def roty(t):
-    """Rotation about the y-axis."""
+    """
+    Rotation about the y-axis
+
+    Parameters
+    ----------
+    t : Float
+        Theta angle
+
+    Returns
+    -------
+    matrix : np.Array
+        Rotation matrix [3,3]
+    """
     c = np.cos(t)
     s = np.sin(t)
     return np.array([[c,  0,  s],
@@ -50,7 +65,19 @@ def roty(t):
 
 
 def rotz(t):
-    """Rotation about the z-axis."""
+    """
+    Rotation about the z-axis
+
+    Parameters
+    ----------
+    t : Float
+        Theta angle
+
+    Returns
+    -------
+    matrix : np.Array
+        Rotation matrix [3,3]
+    """
     c = np.cos(t)
     s = np.sin(t)
     return np.array([[c, -s,  0],
@@ -59,22 +86,45 @@ def rotz(t):
 
 
 def transform_from_rot_trans(R, t):
-    """Transforation matrix from rotation matrix and translation vector."""
+    """
+    Transformation matrix from rotation matrix and translation vector.
+
+    Parameters
+    ----------
+    R : np.Array
+        Rotation matrix [3,3]
+    t : np.Array
+        translation vector [3]
+
+    Returns
+    -------
+    matrix : np.Array
+        Transformation matrix [4,4]
+    """
     R = R.reshape(3, 3)
     t = t.reshape(3, 1)
     return np.vstack((np.hstack([R, t]), [0, 0, 0, 1]))
 
 
 def read_calib_file(filepath):
-    """Read in a calibration file and parse into a dictionary."""
+    """
+    Read in a calibration file and parse into a dictionary
+
+    Parameters
+    ----------
+    filepath : String
+        File path to read from
+
+    Returns
+    -------
+    calib : Dict
+        Dictionary with calibration values
+    """
     data = {}
 
     with open(filepath, 'r') as f:
         for line in f.readlines():
-            try:
-                key, value = line.split(':', 1)
-            except ValueError:
-                key, value = line.split(' ', 1)
+            key, value = line.split(':', 1)
             # The only non-float values in these files are dates, which
             # we don't care about anyway
             try:
@@ -85,9 +135,25 @@ def read_calib_file(filepath):
     return data
 
 
-def pose_from_oxts_packet(packet, scale):
-    """Helper method to compute a SE(3) pose matrix from an OXTS packet.
+def pose_from_oxts_packet(raw_data, scale):
     """
+    Helper method to compute a SE(3) pose matrix from an OXTS packet
+
+    Parameters
+    ----------
+    raw_data : Dict
+        Oxts data to read from
+    scale : Float
+        Oxts scale
+
+    Returns
+    -------
+    R : np.Array
+        Rotation matrix [3,3]
+    t : np.Array
+        Translation vector [3]
+    """
+    packet = OxtsPacket(*raw_data)
     er = 6378137.  # earth radius (approx.) in meters
 
     # Use a Mercator projection to get the translation vector
@@ -108,10 +174,20 @@ def pose_from_oxts_packet(packet, scale):
 
 
 def load_oxts_packets_and_poses(oxts_files):
-    """Generator to read OXTS ground truth data.
+    """
+    Generator to read OXTS ground truth data.
+    Poses are given in an East-North-Up coordinate system
+    whose origin is the first GPS position.
 
-       Poses are given in an East-North-Up coordinate system 
-       whose origin is the first GPS position.
+    Parameters
+    ----------
+    oxts_files : list[String]
+        List of oxts files to read from
+
+    Returns
+    -------
+    oxts : list[Dict]
+        List of oxts ground-truth data
     """
     # Scale for Mercator projection (from first lat value)
     scale = None
@@ -144,25 +220,3 @@ def load_oxts_packets_and_poses(oxts_files):
 
     return oxts
 
-
-def load_image(file, mode):
-    """Load an image from file."""
-    return Image.open(file).convert(mode)
-
-
-def yield_images(imfiles, mode):
-    """Generator to read image files."""
-    for file in imfiles:
-        yield load_image(file, mode)
-
-
-def load_velo_scan(file):
-    """Load and parse a velodyne binary file."""
-    scan = np.fromfile(file, dtype=np.float32)
-    return scan.reshape((-1, 4))
-
-
-def yield_velo_scans(velo_files):
-    """Generator to parse velodyne binary files into arrays."""
-    for file in velo_files:
-        yield load_velo_scan(file)
