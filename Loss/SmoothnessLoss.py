@@ -4,9 +4,9 @@ from abc import ABC
 
 import torch
 
-from vidar.arch.losses.BaseLoss import BaseLoss
-from vidar.utils.data import get_mask_from_list
-from vidar.utils.tensor import same_shape, interpolate_image
+from arch.losses.BaseLoss import BaseLoss
+from utils.data import get_mask_from_list
+from utils.tensor import same_shape, interpolate_image
 
 
 class SmoothnessLoss(BaseLoss, ABC):

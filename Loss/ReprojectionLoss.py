@@ -5,11 +5,11 @@ from functools import partial
 
 import torch
 
-from vidar.arch.losses.BaseLoss import BaseLoss
-from vidar.utils.config import cfg_has
-from vidar.utils.data import get_from_list, get_mask_from_list, get_scale_from_dict
-from vidar.utils.tensor import interpolate, multiply_args, masked_average
-from vidar.utils.types import is_list, is_dict
+from arch.losses.BaseLoss import BaseLoss
+from utils.config import cfg_has
+from utils.data import get_from_list, get_mask_from_list, get_scale_from_dict
+from utils.tensor import interpolate, multiply_args, masked_average
+from utils.types import is_list, is_dict
 
 
 class ReprojectionLoss(BaseLoss, ABC):

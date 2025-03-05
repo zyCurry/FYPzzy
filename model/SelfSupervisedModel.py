@@ -2,11 +2,11 @@
 
 from abc import ABC
 
-from vidar.arch.blocks.image.ViewSynthesisSelfSup import ViewSynthesis
-from vidar.arch.models.BaseModel import BaseModel
-from vidar.arch.models.utils import make_rgb_scales, create_cameras
-from vidar.utils.data import get_from_dict
-from vidar.utils.config import cfg_has
+from arch.blocks.image.ViewSynthesisSelfSup import ViewSynthesis
+from model.BaseModel import BaseModel
+from model.utils import make_rgb_scales, create_cameras
+from utils.data import get_from_dict
+from utils.config import cfg_has
 
 
 class SelfSupervisedModel(BaseModel, ABC):
@@ -28,13 +28,13 @@ class SelfSupervisedModel(BaseModel, ABC):
         if not self.use_gt_intrinsics:
             self.camera_model = cfg_has(cfg.networks.intrinsics, 'camera_model', 'ucm')
             if self.camera_model == 'ucm':
-                from vidar.geometry.camera_ucm import UCMCamera
+                from geometry.camera_ucm import UCMCamera
                 self.camera_class = UCMCamera
             elif self.camera_model == 'eucm':
-                from vidar.geometry.camera_eucm import EUCMCamera
+                from geometry.camera_eucm import EUCMCamera
                 self.camera_class = EUCMCamera
             elif self.camera_model == 'ds':
-                from vidar.geometry.camera_ds import DSCamera
+                from geometry.camera_ds import DSCamera
                 self.camera_class = DSCamera
             else:
                 raise NotImplementedError('Invalid camera type')
