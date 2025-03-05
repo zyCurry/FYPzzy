@@ -1,4 +1,5 @@
-# Copyright 2023 Toyota Research Institute.  All rights reserved.
+# TRI-VIDAR - Copyright 2022 Toyota Research Institute.  All rights reserved.
+
 import glob
 import os
 
@@ -8,9 +9,8 @@ from datasets.dataloaders.BaseDataset import BaseDataset
 from datasets.dataloaders.KITTIDataset_utils import \
     pose_from_oxts_packet, read_calib_file, transform_from_rot_trans
 from datasets.dataloaders.misc import \
-    invert_pose, update_dict
-from datasets.read import read_image
-from PIL import Image
+    invert_pose, stack_sample, make_relative_pose
+from utils.read import read_image
 
 # Cameras from the stereo pair (left is the origin)
 IMAGE_FOLDER = {
@@ -32,47 +32,59 @@ OXTS_POSE_DATA = 'oxts'
 
 
 def read_npz_depth(file, depth_type):
-    """Reads a .npz depth map given a certain depth_type."""
+    """Reads a .npz depth map given a certain depth_type"""
     depth = np.load(file)[depth_type + '_depth'].astype(np.float32)
     return np.expand_dims(depth, axis=2)
 
 
 def read_png_depth(file):
-    """Reads a .png depth map."""
-    depth_png = np.array(Image.open(file), dtype=int)
+    """Reads a .png depth map"""
+    depth_png = np.array(read_image(file), dtype=int)
     assert (np.max(depth_png) > 255), 'Wrong .png depth file'
-    depth = depth_png.astype(float) / 256.
+    depth = depth_png.astype(np.float) / 256.
     depth[depth_png == 0] = -1.
     return np.expand_dims(depth, axis=2)
 
 
 class KITTIDataset(BaseDataset):
-    """KITTI dataset class. 
-    
-    https://www.cvlibs.net/datasets/kitti/
+    """
+    KITTI dataset class
 
     Parameters
     ----------
-    depth_type : str, optional
-        Depth map type, by default None
-    single_intrinsics : bool, optional
-        True if average dataset intrinsics are to be returned, by default False
+    path : String
+        Path to the dataset
+    split : String
+        Split file, with paths to the images to be used
+    data_transform : Function
+        Transformations applied to the sample
+    depth_type : String
+        Which depth type to load
+    input_depth_type : String
+        Which input depth type to load
     """
-    def __init__(self, depth_type=None, single_intrinsics=False, **kwargs):
-        super().__init__(**kwargs, base_tag='kitti')
-
-        # Store variables
+    def __init__(self, split, tag=None,
+                 depth_type=None, input_depth_type=None,
+                 single_intrinsics=False, **kwargs):
+        # Assertions
+        super().__init__(**kwargs)
+        self.tag = 'kitti' if tag is None else tag
 
         self.baseline = + 0.5407
+
         self.backward_context_paths = []
         self.forward_context_paths = []
 
         self.single_intrinsics = None if not single_intrinsics else \
-            np.array([[0.58, 0.00, 0.5],
-                      [0.00, 1.92, 0.5],
-                      [0.00, 0.00, 1.0]], dtype=np.float32)
+            np.array([[0.58, 0.00, 0.5, 0],
+                      [0.00, 1.92, 0.5, 0],
+                      [0.00, 0.00, 1.0, 0],
+                      [0.00, 0.00, 0.0, 1]], dtype=np.float32)
+
+        self.split = split.split('/')[-1].split('.')[0]
 
         self.depth_type = depth_type
+        self.input_depth_type = input_depth_type
 
         self._cache = {}
         self.pose_cache = {}
@@ -81,17 +93,29 @@ class KITTIDataset(BaseDataset):
         self.imu2velo_calib_cache = {}
         self.sequence_origin_cache = {}
 
-        with open(os.path.join(self.path, self.split), "r") as f:
+        with open(os.path.join(self.path, split), "r") as f:
             data = f.readlines()
+        data = [line.strip() for line in data]  # 关键：去掉换行符
+        # print("train.txt 内容示例:", data[:5])  # 只打印前5行
+        
+    
+
+
+
 
         self.paths = []
         # Get file list from data
         for i, fname in enumerate(data):
             path = os.path.join(self.path, fname.split()[0])
+            # print("拼接后的路径:", path, "是否存在:", os.path.exists(path))
             add_flag = True
             if add_flag and self.with_depth:
                 # Check if depth file exists
                 depth = self._get_depth_file(path, self.depth_type)
+                add_flag = depth is not None and os.path.exists(depth)
+            if add_flag and self.with_input_depth:
+                # Check if input depth file exists
+                depth = self._get_depth_file(path, self.input_depth_type)
                 add_flag = depth is not None and os.path.exists(depth)
             if add_flag:
                 self.paths.append(path)
@@ -129,18 +153,18 @@ class KITTIDataset(BaseDataset):
 
     @staticmethod
     def _get_next_file(idx, file):
-        """Get next file given next idx and current file."""
+        """Get next file given next idx and current file"""
         base, ext = os.path.splitext(os.path.basename(file))
         return os.path.join(os.path.dirname(file), str(idx).zfill(len(base)) + ext)
 
     @staticmethod
     def _get_parent_folder(image_file):
-        """Get the parent folder from image_file."""
+        """Get the parent folder from image_file"""
         return os.path.abspath(os.path.join(image_file, "../../../.."))
 
     @staticmethod
     def _get_intrinsics(image_file, calib_data):
-        """Get intrinsics from the calib_data dictionary."""
+        """Get intrinsics from the calib_data dictionary"""
         for cam in ['left', 'right']:
             # Check for both cameras, if found replace and return intrinsics
             if IMAGE_FOLDER[cam] in image_file:
@@ -148,12 +172,12 @@ class KITTIDataset(BaseDataset):
 
     @staticmethod
     def _read_raw_calib_file(folder):
-        """Read raw calibration files from folder."""
+        """Read raw calibration files from folder"""
         return read_calib_file(os.path.join(folder, CALIB_FILE['cam2cam']))
 
     @staticmethod
     def _get_keypoints(filename, size):
-        """Get keypoints from image file."""
+        """Get keypoints from file"""
         filename = filename. \
             replace('KITTI_tiny', 'KITTI_tiny_keypoints'). \
             replace('.png', '.txt.npz')
@@ -164,15 +188,30 @@ class KITTIDataset(BaseDataset):
         return keypoints_coord, keypoints_desc
 
     def get_filename(self, sample_idx):
-        """Returns the filename for an index."""
+        """
+        Returns the filename for an index, following DGP structure
+
+        Parameters
+        ----------
+        sample_idx : Int
+            Sample index
+
+        Returns
+        -------
+        filename : String
+            Filename for that sample
+        """
         filename = os.path.splitext(self.paths[sample_idx].replace(self.path + '/', ''))[0]
         for cam in ['left', 'right']:
             filename = filename.replace('{}/data'.format(IMAGE_FOLDER[cam]),
                                         'proj_depth/{}/%s' % IMAGE_FOLDER[cam])
         return filename
+########################################################################################################################
+#### DEPTH
+########################################################################################################################
 
     def _read_depth(self, depth_file):
-        """Get the depth map from a file."""
+        """Get the depth map from a file"""
         if depth_file.endswith('.npz'):
             return read_npz_depth(depth_file, 'velodyne')
         elif depth_file.endswith('.png'):
@@ -183,7 +222,7 @@ class KITTIDataset(BaseDataset):
 
     @staticmethod
     def _get_depth_file(image_file, depth_type):
-        """Get the corresponding depth file from an image file."""
+        """Get the corresponding depth file from an image file"""
         for cam in ['left', 'right']:
             if IMAGE_FOLDER[cam] in image_file:
                 depth_file = image_file.replace(
@@ -194,7 +233,27 @@ class KITTIDataset(BaseDataset):
 
     def _get_sample_context(self, sample_name,
                             backward_context, forward_context, stride=1):
-        """Get sample context"""
+        """
+        Get a sample context
+
+        Parameters
+        ----------
+        sample_name : String
+            Path + Name of the sample
+        backward_context : Int
+            Size of backward context
+        forward_context : Int
+            Size of forward context
+        stride : Int
+            Stride value to consider when building the context
+
+        Returns
+        -------
+        backward_context : list[Int]
+            List containing the indexes for the backward context
+        forward_context : list[Int]
+            List containing the indexes for the forward context
+        """
         base, ext = os.path.splitext(os.path.basename(sample_name))
         parent_folder = os.path.dirname(sample_name)
         f_idx = int(base)
@@ -236,7 +295,23 @@ class KITTIDataset(BaseDataset):
         return backward_context_idxs, forward_context_idxs
 
     def _get_context_files(self, sample_name, idxs):
-        """Returns image and depth context files"""
+        """
+        Returns image and depth context files
+
+        Parameters
+        ----------
+        sample_name : String
+            Name of current sample
+        idxs : list[Int]
+            Context indexes
+
+        Returns
+        -------
+        image_context_paths : list[String]
+            List of image names for the context
+        depth_context_paths : list[String]
+            List of depth names for the context
+        """
         image_context_paths = [self._get_next_file(i, sample_name) for i in idxs]
         if self.with_depth:
             depth_context_paths = [self._get_depth_file(f, self.depth_type) for f in image_context_paths]
@@ -244,8 +319,12 @@ class KITTIDataset(BaseDataset):
         else:
             return image_context_paths, None
 
+########################################################################################################################
+#### POSE
+########################################################################################################################
+
     def _get_imu2cam_transform(self, image_file):
-        """Gets the transformation between IMU an camera from an image file"""
+        """Gets the transformation between IMU and camera from an image file"""
         parent_folder = self._get_parent_folder(image_file)
         if image_file in self.imu2velo_calib_cache:
             return self.imu2velo_calib_cache[image_file]
@@ -264,7 +343,7 @@ class KITTIDataset(BaseDataset):
 
     @staticmethod
     def _get_oxts_file(image_file):
-        """Gets the oxts file from an image file."""
+        """Gets the oxts file from an image file"""
         # find oxts pose file
         for cam in ['left', 'right']:
             # Check for both cameras, if found replace and return file name
@@ -274,7 +353,7 @@ class KITTIDataset(BaseDataset):
         raise ValueError('Invalid KITTI path for pose supervision.')
 
     def _get_oxts_data(self, image_file):
-        """Gets the oxts data from an image file."""
+        """Gets the oxts data from an image file"""
         oxts_file = self._get_oxts_file(image_file)
         if oxts_file in self.oxts_cache:
             oxts_data = self.oxts_cache[oxts_file]
@@ -284,7 +363,7 @@ class KITTIDataset(BaseDataset):
         return oxts_data
 
     def _get_pose(self, image_file, camera):
-        """Gets the pose information from an image file."""
+        """Gets the pose information from an image file"""
         if image_file in self.pose_cache:
             return self.pose_cache[image_file]
         # Find origin frame in this sequence to determine scale & origin translation
@@ -312,73 +391,103 @@ class KITTIDataset(BaseDataset):
             odo_pose[0, -1] -= self.baseline
         return odo_pose
 
+########################################################################################################################
+
     def __len__(self):
-        """Dataset length."""
+        """Dataset length"""
         return len(self.paths)
 
     def __getitem__(self, idx):
-        """Get dataset sample given an index."""
+        """Get dataset sample"""
 
-        # Initialize sample
-        sample, idx = self.initialize_sample(idx)
+        samples = []
 
-        # Loop over all requested cameras
-        for cam_idx, cam in enumerate(self.cameras):
+        for camera in self.cameras:
 
-            # Get target filename and prepare key tuple
-            filename = self.paths[idx] if cam == 0 else self.paths_stereo[idx]
-            time_cam = (0, cam_idx)
-            update_dict(sample, 'filename', time_cam, filename)
+            # Filename
+            filename = self.paths[idx] if camera == 0 else self.paths_stereo[idx]
 
-            # Add information to the sample dictionary based on label request
-            update_dict(sample, 'rgb', (0, cam_idx), read_image(filename))
-            if self.with_intrinsics:
-                if self.single_intrinsics is not None:
-                    intrinsics = self.single_intrinsics.copy()
-                    intrinsics[0, :] *= sample['rgb'][time_cam].size[0]
-                    intrinsics[1, :] *= sample['rgb'][time_cam].size[1]
-                    update_dict(sample, 'intrinsics', time_cam, intrinsics)
-                else:
-                    parent_folder = self._get_parent_folder(filename)
-                    if parent_folder in self.calibration_cache:
-                        c_data = self.calibration_cache[parent_folder]
-                    else:
-                        c_data = self._read_raw_calib_file(parent_folder)
-                        self.calibration_cache[parent_folder] = c_data
-                    update_dict(sample, 'intrinsics', time_cam,
-                                self._get_intrinsics(filename, c_data))
+            # Base sample
+            sample = {
+                'idx': idx,
+                'tag': self.tag,
+                'filename': self.relative_path({0: filename}),
+                'splitname': '%s_%010d' % (self.split, idx)
+            }
+
+            # Image
+            sample['rgb'] = {0: read_image(filename)}
+
+            # Intrinsics
+            parent_folder = self._get_parent_folder(filename)
+            if parent_folder in self.calibration_cache:
+                c_data = self.calibration_cache[parent_folder]
+            else:
+                c_data = self._read_raw_calib_file(parent_folder)
+                self.calibration_cache[parent_folder] = c_data
+
+            # Return individual or single intrinsics
+            if self.single_intrinsics is not None:
+                intrinsics = self.single_intrinsics.copy()
+                intrinsics[0, :] *= sample['rgb'][0].size[0]
+                intrinsics[1, :] *= sample['rgb'][0].size[1]
+                sample['intrinsics'] = {0: intrinsics}
+            else:
+                sample['intrinsics'] = {0: self._get_intrinsics(filename, c_data)}
+
+            # Add pose information if requested
             if self.with_pose:
-                update_dict(sample, 'pose', time_cam,
-                            self._get_pose(filename, cam))
+                sample['pose'] = {0: self._get_pose(filename, camera)}
+
+            # Add depth information if requested
             if self.with_depth:
-                update_dict(sample, 'depth', time_cam,
-                            self._read_depth(self._get_depth_file(filename, self.depth_type)))
+                sample['depth'] = {0: self._read_depth(
+                    self._get_depth_file(filename, self.depth_type))}
 
-            # If includes context
+            # Add input depth information if requested
+            if self.with_input_depth:
+                sample['input_depth'] = {0: self._read_depth(
+                    self._get_depth_file(filename, self.input_depth_type))}
+
+            # Add context information if requested
             if self.with_context:
-                # Get context filenames and loop over them
-                all_context_idxs = self.backward_context_paths[idx] + self.forward_context_paths[idx]
-                image_context_paths, depth_context_paths = self._get_context_files(filename, all_context_idxs)
-                for time, filename in zip(self.context, image_context_paths):
-                    time_cam = (time, cam_idx)
-                    update_dict(sample, 'filename', time_cam, filename)
-                    update_dict(sample, 'rgb', time_cam,
-                                read_image(filename))
-                if self.with_intrinsics_context:
-                    for time, filename in zip(self.context, image_context_paths):
-                        time_cam = (time, cam_idx)
-                        update_dict(sample, 'intrinsics', time_cam,
-                                    sample['intrinsics'][(0, cam_idx)])
-                if self.with_pose_context:
-                    for time, filename in zip(self.context, image_context_paths):
-                        time_cam = (time, cam_idx)
-                        update_dict(sample, 'pose', time_cam,
-                                    self._get_pose(filename, cam))
-                if self.with_depth_context:
-                    for time, filename in zip(self.context, depth_context_paths):
-                        time_cam = (time, cam_idx)
-                        update_dict(sample, 'depth', time_cam,
-                                    self._read_depth(self._get_depth_file(filename, self.depth_type)))
 
-        # Return post-processed sample
-        return self.post_process_sample(sample)
+                # Add context images
+                all_context_idxs = self.backward_context_paths[idx] + \
+                                   self.forward_context_paths[idx]
+                image_context_paths, depth_context_paths = \
+                    self._get_context_files(filename, all_context_idxs)
+                image_context = [read_image(f) for f in image_context_paths]
+                sample['rgb'].update({
+                    key: val for key, val in zip(self.context, image_context)
+                })
+
+                # Add context poses
+                if self.with_pose:
+                    image_context_pose = [self._get_pose(f, camera) for f in image_context_paths]
+                    sample['pose'].update({
+                        key: val for key, val in zip(self.context, image_context_pose)
+                    })
+
+                # Add context depth
+                if self.with_depth_context:
+                    depth_context = [self._read_depth(self._get_depth_file(
+                            path, self.depth_type)) for path in depth_context_paths]
+                    sample['depth'].update({
+                        key: val for key, val in zip(self.context, depth_context)
+                    })
+
+            # Stack sample
+            samples.append(sample)
+
+        # Make relative poses
+        samples = make_relative_pose(samples)
+
+        # Transform data
+        if self.data_transform:
+            samples = self.data_transform(samples)
+
+        # Return stacked sample
+        return stack_sample(samples)
+
+########################################################################################################################

@@ -85,7 +85,8 @@ def resnet_multi_input(num_layers, num_input_rgb, pretrained=True):
     model = ResNetMultiInput(block_type, block_channels, num_input_rgb)
 
     if pretrained:
-        loaded = RESNET_VERSIONS[num_layers](weights=RESNET_WEIGHTS).state_dict()
+        loaded = RESNET_VERSIONS[num_layers](pretrained=True).state_dict()  # 用 pretrained 替代 weights
+
         loaded['conv1.weight'] = torch.cat(
             [loaded['conv1.weight']] * num_input_rgb, 1) / num_input_rgb
         model.load_state_dict(loaded)
